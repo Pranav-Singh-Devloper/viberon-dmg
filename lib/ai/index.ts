@@ -89,6 +89,18 @@ export async function runTurn(
   request: AiTurnRequest,
   handlers?: AiTurnHandlers,
 ): Promise<EnrichedTurnResult> {
+  // An evaluation pins ONE model (AI_MODEL / VIBERON_MODEL): never swap it,
+  // not even for a retired one. Fail loudly instead of switching models.
+  if (isPinnedModel(request.model)) {
+    try {
+      return await runTurnOnce(request, handlers);
+    } catch (error) {
+      if (error instanceof ModelUnavailableError) {
+        error.message = `${error.message} (AI_MODEL pins this model, so Viberon does not switch to another one.)`;
+      }
+      throw error;
+    }
+  }
   // A model already known to be retired/unavailable is swapped before the
   // call, so a long run does not pay a failing request on every turn.
   let model = await usableModel(request.model);
@@ -102,6 +114,12 @@ export async function runTurn(
       model = next;
     }
   }
+}
+
+/** Whether `model` is the one the environment names (a bare id matches its provider-prefixed form). */
+function isPinnedModel(model: string): boolean {
+  const envId = envModelId();
+  return Boolean(envId && (model === envId || model.endsWith(`:${envId}`)));
 }
 
 /**

@@ -138,6 +138,21 @@ describe("Gemini provider", () => {
     expect(await getApiKey("nvidia")).toBeNull();
   });
 
+  it("never swaps the model AI_MODEL pins, even when it is shut down", async () => {
+    process.env.GEMINI_API_KEY = "AIza-test";
+    process.env.AI_MODEL = "gemini-9.0-pro";
+    try {
+      const calls = stubGemini((model) =>
+        model === "gemini-9.0-pro" ? new Response(JSON.stringify({ error: { message: "not found" } }), { status: 404 }) : okChat(),
+      );
+      await availableModels();
+      await expect(runTurn(request("gemini:gemini-9.0-pro"))).rejects.toThrow(/AI_MODEL pins this model/);
+      expect(calls.filter((c) => c.model).every((c) => c.model === "gemini-9.0-pro")).toBe(true);
+    } finally {
+      delete process.env.AI_MODEL;
+    }
+  });
+
   it("falls back to the next Gemini model when one is shut down", async () => {
     process.env.GEMINI_API_KEY = "AIza-test";
     const calls = stubGemini((model) =>
