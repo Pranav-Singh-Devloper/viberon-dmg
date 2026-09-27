@@ -6,6 +6,8 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 
 **Update (same day, commit `2685113` on `main`):** developer-0e fixed G1 and G3 (§4) and started on G5 (§9) in response to this doc's first pass. §4 is now PASS; §9 stays GAP, downgraded, since only half of G5's suggested fix landed. Line numbers below that reference the new commit are marked; everything else still refers to `738a313`.
 
+**Second update (same day, commits `dea20e5` and `b07bd19` on `main`):** developer-0e finished G5 (`engines`/`packageManager` added) and fixed G2 (an `AI_MODEL`-pinned model is never swapped, even on a 404/410/no-quota error — it now fails loudly instead). §9 is now PASS. Only G4 remains open, under §4.
+
 **Status key:** PASS means the requirement is met. GAP means there is a real shortfall, listed under [Gaps](#gaps). N/A means the section does not apply to this architecture.
 
 ## Summary
@@ -15,19 +17,19 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 | 1 | Mandatory Makefile with `setup`, `run`, `test` (`clean` where applicable) | PASS | `Makefile:41-68`; `make setup` and `make test` run green |
 | 2 | Credential read from `AI_API_KEY`, never hard-coded | PASS | `lib/ai/credentials.ts:44-59`, `lib/ai/provider-config.ts:60-80,105`; no recipe line references the key |
 | 3 | Text-only model; no image, audio or video input required | PASS | Headless path takes text only; `images` is never set on the run/eval path |
-| 4 | Model configuration clearly defined; no model substitution | PASS | Fixed in `2685113`: `reviewModel()` and `make eval` now resolve `AI_MODEL` first (G1, G3 resolved). Two low-severity notes remain (G2, G4) |
+| 4 | Model configuration clearly defined; no model substitution | PASS | Fixed in `2685113`/`b07bd19`: `reviewModel()`/`make eval` resolve `AI_MODEL` first, and a pinned model is never swapped on error (G1, G2, G3 resolved). One low-severity note remains (G4) |
 | 5 | Standard 5-step evaluation procedure | PASS | export, `make setup`, `make run`, then issue via the web IDE or `TASK` |
 | 6 | TUI launched through `make run` | N/A | Vibron ships a web IDE, a desktop app and a headless CLI, not a TUI. Both modes start from `make run` |
 | 7 | Works in the prescribed evaluation environment | PASS | Model, endpoint and key all come from env; the repo's test command is auto-detected |
 | 8 | Credential security, `.env.example` only | PASS | `.env.example` is empty; `.env*` is ignored; secret scan finds test fixtures only |
-| 9 | Environment independence, dependencies declared | **GAP** | `.nvmrc` now pins Node (`2685113`); `engines`/`packageManager` still missing (G5, downgraded). README omits `make` and `AI_API_KEY` (G6) |
+| 9 | Environment independence, dependencies declared | PASS | Fixed in `dea20e5`: `.nvmrc`, `engines.node` and `packageManager` all pin the runtime (G5 resolved). README still omits `make` and `AI_API_KEY` (G6) |
 | 10 | Reproducible execution, settings documented or controlled | PASS | Temperature 0 by default; budgets fixed; lockfile frozen. One note (G8) |
 | 11 | Runs without the evaluators modifying the code | PASS | No source edit needed; configuration comes from env only |
 | 12 | Standard evaluator workflow | PASS | `git clone` → `export AI_API_KEY` → `make setup` → `make run` |
 | 13 | Final submission checklist | PASS (local) | Required layout present; setup and test verified locally. A clean-container run is still open |
 | 14 | "Important": setup and launch with no manual configuration | PASS | Same evidence as §1, §2, §11 and §12 |
 
-**Result: 12 PASS, 1 N/A, 1 section with a gap (§9).** Of the original 8 gap items, G1 and G3 are resolved; 6 remain (1 low-medium, 5 low) plus 1 open verification item. None of them blocks `export AI_API_KEY` → `make setup` → `make run`.
+**Result: 13 PASS, 1 N/A, 0 sections with a gap.** Of the original 8 gap items, G1, G2, G3 and G5 are resolved; G4, G6, G7 and G8 remain, all low severity, plus 1 open verification item. None of them blocks `export AI_API_KEY` → `make setup` → `make run`.
 
 ---
 
@@ -85,9 +87,10 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 - **`make eval` now resolves the same way (fixed in `2685113`).** `eval/run.ts:124-127` calls `resolveModel("auto", { agenticOnly: true })` instead of hardcoding a default, so it inherits `AI_MODEL`.
 - **Selection without `AI_MODEL`.** The highest tier wins, with ties broken by `PROVIDER_PREFERENCE` (`lib/ai/index.ts:232,277-288`).
 
-**Two low-severity notes remain (details under [Gaps](#gaps)), neither reopened by this fix:**
-- **G2 (low):** `runTurn` still swaps to another model after a `ModelUnavailableError`, first within the same provider and then across providers, for up to 8 hops (`lib/ai/index.ts:88-104,113-120`), without special-casing an explicitly-set `AI_MODEL` — so a mid-run provider error can still hop away from the prescribed model.
-- **G4 (low):** the declared defaults still disagree. `PROVIDER_TABLE.anthropic.model = "claude-sonnet-5"` (`provider-config.ts:33`) is never used; without `AI_MODEL`, an Anthropic key actually runs `claude-opus-5-5`, the first frontier-tier catalog entry (`models.ts:54`). The no-key fallback string is a third value, `"claude-opus-5"` (`lib/headless/run.ts:283`, moved from 277 by unrelated commits).
+**A pinned model is now never swapped either (fixed in `b07bd19`).** `runTurn()` checks `isPinnedModel()` first: when `AI_MODEL`/`VIBERON_MODEL` names the model in play, a `ModelUnavailableError` (404/410/no-quota) is no longer caught and hopped past — it's rethrown with `"AI_MODEL pins this model, so Viberon does not switch to another one."` appended (`lib/ai/index.ts:89-100,119-122`). The 8-hop cross-model/cross-provider fallback (`index.ts:104-116`) still exists, but only ever runs for an *unpinned* run, which is the documented, intended behavior — no `AI_MODEL` was set, so there is nothing to substitute away from. **Verified:** `tests/ai.gemini.test.ts` — a new case stubs a pinned Gemini model returning HTTP 404 and asserts `runTurn` rejects with `/AI_MODEL pins this model/` and that every call the stub saw used the pinned model id, never a fallback. Ran the file directly: `npx vitest run tests/ai.gemini.test.ts` → 10 passed (the existing 9 plus this one).
+
+**One low-severity note remains (details under [Gaps](#gaps)):**
+- **G4 (low):** the declared defaults still disagree. `PROVIDER_TABLE.anthropic.model = "claude-sonnet-5"` (`provider-config.ts:33`) is never used; without `AI_MODEL`, an Anthropic key actually runs `claude-opus-5-5`, the first frontier-tier catalog entry (`models.ts:54`). The no-key fallback string is a third value, `"claude-opus-5"` (`lib/headless/run.ts:283`).
 
 ### 5. Standard evaluation procedure: PASS
 
@@ -139,7 +142,7 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
   - `81fc3a6` adds the same `should-not-leak` fixture.
 - **Makefile:** no credential appears in any recipe, and none is echoed (§2).
 
-### 9. Environment independence: GAP
+### 9. Environment independence: PASS
 
 **Requirement:** the Makefile encapsulates setup. The evaluator must not have to install undocumented dependencies, work out the run command, or edit source, dependency or config files.
 
@@ -148,9 +151,9 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 - **pnpm is bootstrapped when missing** through `corepack enable` (`Makefile:45`).
 - **The run command is fixed.** It is `make run`, and the CLI resolves its own root through symlinks (`bin/viberon:4-11`).
 - **Setup warning is harmless.** pnpm 10 prints "Ignored build scripts: @firebase/util, electron, esbuild, msw, protobufjs, sharp, unrs-resolver". This does not affect `run` or `test`: the test suite passed after exactly this install.
+- **The runtime is now fully pinned (fixed in `dea20e5`, G5 resolved).** `.nvmrc` (`v22.18.0`), `package.json`'s `"engines": {"node": ">=20"}` and `"packageManager": "pnpm@10.24.0"` (`package.json:7-10`) together mean any tool that respects them — `nvm`/`fnm`/`asdf`, corepack, several CI actions — picks the right Node and pnpm automatically, and a plain `npm install`/`pnpm install` on the wrong Node version gets an explicit `engines` warning rather than a silent mismatch. **Verified:** `grep -n 'engines\|packageManager' package.json` shows both fields present.
 
-**Gaps (details under [Gaps](#gaps)):**
-- **G5 (low, downgraded from medium — partially fixed in `2685113`):** `.nvmrc` now pins `v22.18.0` at the repo root, so any tool that respects it (`nvm use`, `fnm`, `asdf`, several CI actions) picks the right Node automatically. `package.json` still has no `engines` or `packageManager` field, though, so `npm install`/corepack won't themselves warn or fail on the wrong Node or pnpm version, and corepack still picks its own default pnpm rather than a pinned one. Per developer-0e, the `engines` addition is in flight in a separate concurrent change. Verified here on Node v22.18.0 with pnpm 10.24.0; `@types/node ^20` implies Node ≥ 20.
+**One low-severity note remains (details under [Gaps](#gaps)):**
 - **G6 (low):** the README does not document the evaluation interface. It never mentions `make` or `AI_API_KEY` (`grep` finds no hits). Its headless quickstart tells the reader to `export ANTHROPIC_API_KEY` (`README.md:168`), and "Getting started" says to use `pnpm install`/`pnpm dev` and add a key in Settings (`README.md:110-132`).
 - *Note:* `make eval` (the bonus target) also needs `python3` for the Python fixture tasks (`README.md:209-210`), and `make setup` does not install it.
 
@@ -204,7 +207,7 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 **Requirement:** the evaluator can run `export AI_API_KEY=…; make setup; make run` without modifying source or configuring the project by hand.
 
 **Evidence:**
-- This holds as shown in §1, §2, §11 and §12, given a machine with Node ≥ 20 (see G5).
+- This holds as shown in §1, §2, §11 and §12; Node ≥ 20 is now declared and pinned (§9), not just assumed.
 - No key entry in source or UI is needed: `AI_API_KEY` from the environment is picked up by both the web app and the headless CLI (`credentials.ts:61-65`, `openai-compat.ts:422`).
 
 ---
@@ -214,9 +217,9 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 | # | § | Severity | Gap | Suggested fix |
 |---|---|---|---|---|
 | ~~G1~~ | 4 | ~~Medium~~ | **Fixed in `2685113`.** `reviewModel()` now returns `envModelId()` first | — |
+| ~~G2~~ | 4 | ~~Low~~ | **Fixed in `b07bd19`.** A pinned `AI_MODEL` is never swapped, even on 404/410/no-quota — fails loudly instead | — |
 | ~~G3~~ | 4 | ~~Low~~ | **Fixed in `2685113`.** `eval/run.ts` now resolves through `resolveModel("auto")` | — |
-| G5 | 9 | Low (was medium) | **Partially fixed in `2685113`:** `.nvmrc` pins Node. `engines`/`packageManager` still missing from `package.json` | Add `"engines": {"node": ">=20"}` and `"packageManager": "pnpm@10.24.0"` to `package.json` (in flight per developer-0e). Have `make setup` fail fast with a clear message if `node` is missing or too old |
-| G2 | 4 | Low | Automatic cross-model fallback on `ModelUnavailableError`, up to 8 hops (`lib/ai/index.ts:88-104,113-120`), still unconditional | Disable the hop when `AI_MODEL` is set: fail loudly instead of substituting |
+| ~~G5~~ | 9 | ~~Medium~~ | **Fixed in `dea20e5`.** `.nvmrc`, `engines.node` and `packageManager` all pin the runtime | — |
 | G4 | 4 | Low | Three disagreeing "default model" values: `PROVIDER_TABLE.anthropic.model` (`claude-sonnet-5`, unused), the actual catalog pick (`claude-opus-5-5`), and the no-key fallback (`claude-opus-5`) | Pick one source of truth, and remove or align the unused Anthropic entry |
 | G6 | 2, 9 | Low | The README never mentions `make` or `AI_API_KEY`; its headless quickstart says `ANTHROPIC_API_KEY`. The missing-key error also names `ANTHROPIC_API_KEY` (`lib/ai/types.ts:197`) | Add an "Evaluation quickstart" (`export AI_API_KEY`, `make setup`, `make run`) to the README, and mention `AI_API_KEY` in the missing-credential messages |
 | G7 | 2 | Low | `AI_API_KEY` is not exclusive: per-provider env vars and UI-saved keys take precedence (`credentials.ts:61-65,90-99`) | Let `AI_API_KEY` win when it is set, or document the precedence. It is harmless on a clean evaluator box |
@@ -270,4 +273,21 @@ sed -n '239,290p' lib/ai/index.ts
 sed -n '80,125p' lib/ai/index.ts                          # cross-model hop still unconditional
 grep -n "claude-sonnet-5\|claude-opus-5\b\|claude-opus-5-5" lib/ai/provider-config.ts lib/headless/run.ts lib/ai/models.ts
                                                            # → still three values (provider-config.ts:33, models.ts:54, headless/run.ts:283)
+```
+
+### Re-verification of `dea20e5` and `b07bd19` (§9, G2)
+
+```sh
+cd /Users/nishant/Developer/vibron-compliance-update-2   # worktree of main @ 659b1af, includes dea20e5 and b07bd19
+
+git show --stat dea20e5 b07bd19
+grep -n "engines\|packageManager" package.json            # → both present now
+cat .nvmrc                                                # → v22.18.0
+
+# read the runTurn() diff (isPinnedModel guard, error message rethrow), then ran the new test for real
+npx vitest run tests/ai.gemini.test.ts                    # → 10 passed (9 existing + 1 new)
+
+# confirmed G4 is still the only open item
+grep -n "claude-sonnet-5\|claude-opus-5\b\|claude-opus-5-5" lib/ai/provider-config.ts lib/headless/run.ts lib/ai/models.ts
+                                                           # → still three values, unchanged
 ```
