@@ -11,8 +11,9 @@
  *   viberon review [--repo <path>] [--base <ref> | --pr <url>] [--model <id>] [--json]
  *   viberon issues [--repo <path>] [--label <l>] [--fix <n,n|all>] [--refix] [--no-deliver] [--model <id>] [--json]
  *   viberon clone <url|owner/repo|issue-url> [--ref <ref>] [--depth <n>] [--setup] [--json]
- *   viberon eval [--only a,b] [--model <id>] [--max-turns <n>] [--timeout <sec>]
- *   viberon swe --ids a,b [--model <id>] [--limit <n>] [--max-turns <n>] [--timeout <sec>] [--data <file>] [--out <dir>] [--gold]
+ *   viberon eval [--suite quick|mini] [--only a,b] [--model <id>] [--max-turns <n>] [--timeout <sec>]
+ *   viberon swe --ids a,b [--tag <t>] [--shard <k/n>] [--model <id>] [--limit <n>] [--max-turns <n>]
+ *               [--timeout <sec>] [--data <file>] [--out <dir>] [--gold]
  *   viberon arena report <results.jsonl> [--json]
  */
 
@@ -45,10 +46,16 @@ export const USAGE = `Usage:
       re-fixes an issue that already has a PR too (updates it, or opens a new one if it was merged);
       --refix is accepted as an explicit alias for that same default
   viberon clone <url|owner/repo|issue-url> [--ref <ref>] [--depth <n>] [--setup] [--json]
-  viberon eval [--only a,b] [--model <id>] [--max-turns <n>] [--timeout <sec>]
-  viberon swe --ids a,b [--model <id>] [--limit <n>] [--max-turns <n>] [--timeout <sec>] [--data <rows.json>] [--out <dir>] [--gold]
+  viberon eval [--suite quick|mini] [--only a,b] [--model <id>] [--max-turns <n>] [--timeout <sec>]
+      --suite picks a named eval/suites.ts suite (default mini, every bundled task; quick is a fast
+      smoke test); --only names win over --suite
+  viberon swe --ids a,b [--tag <t>] [--shard <k/n>] [--model <id>] [--limit <n>] [--max-turns <n>]
+              [--timeout <sec>] [--data <rows.json>] [--out <dir>] [--gold]
       SWE-bench Verified instances graded by their hidden tests (FAIL_TO_PASS / PASS_TO_PASS);
-      --gold applies the official patch instead of running the agent (validates the environment)
+      --gold applies the official patch instead of running the agent (validates the environment);
+      --tag labels the run (rows append to results-<tag>.jsonl and re-running the same tag resumes,
+      skipping ids already recorded); --shard k/n runs every n-th id starting at k, for running a
+      tag's instances split across several parallel processes
   viberon arena report <results.jsonl> [--json]
       compares harnesses on tasks completed by every harness; ranks by fixes, tokens, then time
   viberon --version
@@ -112,6 +119,7 @@ export interface CloneArgs {
 
 export interface EvalArgs {
   command: "eval";
+  suite?: string;
   only?: string[];
   model?: string;
   maxTurns?: number;
@@ -128,6 +136,8 @@ export interface ArenaArgs {
 export interface SweArgs {
   command: "swe";
   ids: string[];
+  tag?: string;
+  shard?: string;
   model?: string;
   limit?: number;
   maxTurns?: number;
@@ -201,8 +211,8 @@ const KNOWN: Record<string, Set<string>> = {
   review: new Set(["repo", "base", "pr", "model", "json", "help"]),
   issues: new Set(["repo", "label", "fix", "refix", "no-deliver", "model", "json", "help"]),
   clone: new Set(["ref", "depth", "setup", "json", "help"]),
-  eval: new Set(["only", "model", "max-turns", "timeout", "help"]),
-  swe: new Set(["ids", "model", "limit", "max-turns", "timeout", "data", "out", "gold", "help"]),
+  eval: new Set(["suite", "only", "model", "max-turns", "timeout", "help"]),
+  swe: new Set(["ids", "tag", "shard", "model", "limit", "max-turns", "timeout", "data", "out", "gold", "help"]),
   arena: new Set(["json", "help"]),
 };
 
@@ -316,6 +326,8 @@ export function parseCliArgs(argv: string[]): CliArgs {
     return {
       command,
       ids,
+      tag: stringFlag(flags, "tag"),
+      shard: stringFlag(flags, "shard"),
       model: stringFlag(flags, "model"),
       limit: intFlag(flags, "limit"),
       maxTurns: intFlag(flags, "max-turns"),
@@ -328,6 +340,7 @@ export function parseCliArgs(argv: string[]): CliArgs {
   const only = stringFlag(flags, "only");
   return {
     command: "eval",
+    suite: stringFlag(flags, "suite"),
     only: only ? only.split(",").map((s) => s.trim()).filter(Boolean) : undefined,
     model: stringFlag(flags, "model"),
     maxTurns: intFlag(flags, "max-turns"),
@@ -538,6 +551,8 @@ export async function main(argv: string[]): Promise<number> {
       const { runSwe } = await import("@/eval/swe/run");
       const summary = await runSwe({
         ids: args.ids,
+        tag: args.tag,
+        shard: args.shard,
         model: args.model,
         limit: args.limit,
         maxTurns: args.maxTurns,
@@ -565,6 +580,7 @@ export async function main(argv: string[]): Promise<number> {
       }
     }
     const summary = await runEval({
+      suite: args.suite,
       only: args.only,
       model: args.model,
       maxTurns: args.maxTurns,

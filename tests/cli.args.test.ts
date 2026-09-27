@@ -64,6 +64,43 @@ describe("parseCliArgs", () => {
     expect(parseCliArgs(["run", "--help"])).toEqual({ command: "help" });
   });
 
+  it("parses an eval suite", () => {
+    expect(parseCliArgs(["eval", "--suite", "quick"])).toMatchObject({
+      command: "eval",
+      suite: "quick",
+      only: undefined,
+    });
+    // --only still wins over --suite (resolveSuite in eval/suites.ts enforces this at run time).
+    expect(parseCliArgs(["eval", "--suite", "mini", "--only", "slugify"])).toMatchObject({
+      command: "eval",
+      suite: "mini",
+      only: ["slugify"],
+    });
+  });
+
+  it("parses swe --tag and --shard", () => {
+    expect(parseCliArgs(["swe", "--ids", "a,b", "--tag", "v1", "--shard", "0/2"])).toEqual({
+      command: "swe",
+      ids: ["a", "b"],
+      tag: "v1",
+      shard: "0/2",
+      model: undefined,
+      limit: undefined,
+      maxTurns: undefined,
+      timeoutSec: undefined,
+      data: undefined,
+      out: undefined,
+      gold: false,
+    });
+    expect(parseCliArgs(["swe", "--ids", "a", "--gold"])).toMatchObject({
+      command: "swe",
+      ids: ["a"],
+      tag: undefined,
+      shard: undefined,
+      gold: true,
+    });
+  });
+
   it("parses an arena report input", () => {
     expect(parseCliArgs(["arena", "report", "results/sonnet.jsonl", "--json"])).toEqual({
       command: "arena",
