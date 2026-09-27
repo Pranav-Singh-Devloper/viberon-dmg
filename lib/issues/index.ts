@@ -19,6 +19,7 @@ import {
 } from "@/lib/github-api";
 import { enqueue, getTaskQueue, type Task } from "@/lib/tasks";
 import { withLock } from "@/lib/tasks/lock";
+import { condenseIssueText } from "@/lib/text/condense";
 import { openWorkspace } from "@/lib/workspace";
 
 export class IssuesError extends Error {
@@ -59,7 +60,10 @@ export function issueTaskText(
     .filter((c) => c.body?.trim())
     .map((c) => `--- comment by @${c.user?.login ?? "unknown"} ---\n${c.body.trim()}`)
     .join("\n\n");
-  const body = (issue.body ?? "").trim().slice(0, MAX_BODY) || "(no description)";
+  const rawBody = (issue.body ?? "").trim() || "(no description)";
+  // Condensed inside the <issue> framing only: the first line and the
+  // untrusted-input framing around it are never touched by condensing.
+  const body = condenseIssueText(rawBody, MAX_BODY);
   return [
     `Fix GitHub issue #${issue.number}: ${issue.title}`,
     "",
@@ -69,7 +73,7 @@ export function issueTaskText(
     `Labels: ${issue.labels.join(", ") || "none"}`,
     "",
     body,
-    ...(thread ? ["", thread.slice(0, MAX_BODY)] : []),
+    ...(thread ? ["", condenseIssueText(thread, MAX_BODY)] : []),
     "</issue>",
   ].join("\n");
 }
