@@ -23,7 +23,8 @@ import {
 } from "@/lib/context/engine";
 import { recordEntry, upsertTask, type MemoryEntryKind } from "@/lib/memory";
 import type { ProjectMemory } from "@/lib/memory/types";
-import { classifyCommand } from "@/lib/terminal";
+import { searchCode as searchCodeOnDisk } from "@/lib/search/compact";
+import { classifyAgentCommand, classifyCommand } from "@/lib/terminal";
 import { trimHeadTail } from "@/lib/terminal/output";
 import * as verify from "@/lib/verify";
 import {
@@ -412,9 +413,23 @@ const grepTool: ToolImpl = {
     if (!pattern) return "Error: `pattern` is required.";
     const requested = num(args.max_results);
     const maxResults = Math.min(GREP_MAX_RESULTS, Math.max(1, Math.round(requested ?? GREP_DEFAULT_RESULTS)));
+    const glob = str(args.glob) || undefined;
+    const regex = args.regex === true;
+    // A real folder on disk: ripgrep/git-grep-backed search, already grouped
+    // and capped per file. No on-disk root (a virtual/in-memory workspace) —
+    // fall back to the in-memory engine search below.
+    if (ctx.handle.rootPath) {
+      return searchCodeOnDisk(ctx.handle.rootPath, pattern, {
+        glob,
+        fixed: !regex,
+        ignoreCase: true,
+        maxMatches: maxResults,
+        maxPerFile: GREP_PER_FILE,
+      });
+    }
     const found = await searchCode(ctx.engine, pattern, {
-      glob: str(args.glob) || undefined,
-      regex: args.regex === true,
+      glob,
+      regex,
       maxResults,
     });
     return groupByFile(found);
@@ -1003,7 +1018,7 @@ const runCommandTool: ToolImpl = {
       return "Refused: command execution is disabled in Settings.";
     }
 
-    const verdict = classifyCommand(command);
+    const verdict = classifyAgentCommand(command);
     if (verdict.allowed === false) {
       return `Refused: this command ${verdict.reason}. Viberon never runs it. Choose a safer approach.`;
     }
