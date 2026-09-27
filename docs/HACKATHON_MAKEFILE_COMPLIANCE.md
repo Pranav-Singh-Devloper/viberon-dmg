@@ -4,6 +4,8 @@ How Vibron (Viberon) meets each section of the organizer's "AI Harness Hackathon
 
 Every entry was checked against the repository at commit `738a313` (branch `hackathon-spec-doc`) on 2026-09-27. The checks were file reads, `git grep` and `git log` scans, `make -n` dry runs, and live runs of `make setup`, `make test` and a headless `make run`. The commands are listed at the end. Line numbers refer to that commit.
 
+**Update (same day, commit `2685113` on `main`):** developer-0e fixed G1 and G3 (§4) and started on G5 (§9) in response to this doc's first pass. §4 is now PASS; §9 stays GAP, downgraded, since only half of G5's suggested fix landed. Line numbers below that reference the new commit are marked; everything else still refers to `738a313`.
+
 **Status key:** PASS means the requirement is met. GAP means there is a real shortfall, listed under [Gaps](#gaps). N/A means the section does not apply to this architecture.
 
 ## Summary
@@ -13,19 +15,19 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 | 1 | Mandatory Makefile with `setup`, `run`, `test` (`clean` where applicable) | PASS | `Makefile:41-68`; `make setup` and `make test` run green |
 | 2 | Credential read from `AI_API_KEY`, never hard-coded | PASS | `lib/ai/credentials.ts:44-59`, `lib/ai/provider-config.ts:60-80,105`; no recipe line references the key |
 | 3 | Text-only model; no image, audio or video input required | PASS | Headless path takes text only; `images` is never set on the run/eval path |
-| 4 | Model configuration clearly defined; no model substitution | **GAP** | Defaults declared, but side calls and fallbacks can use another model (G1 to G4) |
+| 4 | Model configuration clearly defined; no model substitution | PASS | Fixed in `2685113`: `reviewModel()` and `make eval` now resolve `AI_MODEL` first (G1, G3 resolved). Two low-severity notes remain (G2, G4) |
 | 5 | Standard 5-step evaluation procedure | PASS | export, `make setup`, `make run`, then issue via the web IDE or `TASK` |
 | 6 | TUI launched through `make run` | N/A | Vibron ships a web IDE, a desktop app and a headless CLI, not a TUI. Both modes start from `make run` |
 | 7 | Works in the prescribed evaluation environment | PASS | Model, endpoint and key all come from env; the repo's test command is auto-detected |
 | 8 | Credential security, `.env.example` only | PASS | `.env.example` is empty; `.env*` is ignored; secret scan finds test fixtures only |
-| 9 | Environment independence, dependencies declared | **GAP** | Node runtime is not declared or pinned (G5); README omits `make` and `AI_API_KEY` (G6) |
+| 9 | Environment independence, dependencies declared | **GAP** | `.nvmrc` now pins Node (`2685113`); `engines`/`packageManager` still missing (G5, downgraded). README omits `make` and `AI_API_KEY` (G6) |
 | 10 | Reproducible execution, settings documented or controlled | PASS | Temperature 0 by default; budgets fixed; lockfile frozen. One note (G8) |
 | 11 | Runs without the evaluators modifying the code | PASS | No source edit needed; configuration comes from env only |
 | 12 | Standard evaluator workflow | PASS | `git clone` → `export AI_API_KEY` → `make setup` → `make run` |
 | 13 | Final submission checklist | PASS (local) | Required layout present; setup and test verified locally. A clean-container run is still open |
 | 14 | "Important": setup and launch with no manual configuration | PASS | Same evidence as §1, §2, §11 and §12 |
 
-**Result: 11 PASS, 1 N/A, 2 sections with gaps (§4 and §9).** There are 8 gap items in total (2 medium, 6 low) and 1 open verification item. None of them blocks `export AI_API_KEY` → `make setup` → `make run`.
+**Result: 12 PASS, 1 N/A, 1 section with a gap (§9).** Of the original 8 gap items, G1 and G3 are resolved; 6 remain (1 low-medium, 5 low) plus 1 open verification item. None of them blocks `export AI_API_KEY` → `make setup` → `make run`.
 
 ---
 
@@ -71,21 +73,21 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 - **Nothing on the run or eval path sets images.** `git grep -n images -- lib/headless lib/harness cli eval` has one hit, the optional web-API request field `lib/harness/contracts.ts:34`, and neither `runHeadless` nor `solveTask` sets it.
 - **Image blocks are optional and only come from the web UI.** A user can attach a screenshot in the web UI (`lib/ai/types.ts:33-38`; `lib/agents/orchestrator.ts:726-731`; `lib/agents/runner.ts:457-462`). They are never required. The OpenAI-compatible message converter keeps only text, tool_use and tool_result blocks (`lib/ai/openai-messages.ts:72,77,104,117`), so text-only endpoints work unchanged.
 
-### 4. Model configuration: GAP
+### 4. Model configuration: PASS
 
 **Requirement:** define the model configuration clearly in the application or config. Use the prescribed model if the committee names one, and do not substitute another. The credential stays external.
 
 **What is in place:**
 - **Default model per provider.** `PROVIDER_TABLE` in `lib/ai/provider-config.ts:29-57` gives each provider's wire protocol, base URL and default model, for example `gemini-2.5-flash`, `openai/gpt-oss-120b` for Groq, OpenRouter, NVIDIA and others, and `gpt-5-mini` for OpenAI.
 - **Full model catalog.** Tier, context window, pricing and whether each model is agentic are in `lib/ai/models.ts:50+`.
-- **Prescribed model.** `AI_MODEL` (or `VIBERON_MODEL`) is read by `envModelId()` (`lib/ai/models.ts:320-323`). It wins automatic selection in `resolveModel()` (`lib/ai/index.ts:268-275`) and reaches the OpenAI-compatible adapter through `provider-config.ts:108,132`. The CLI also accepts `--model <id>` (`cli/viberon.ts:29`).
+- **Prescribed model.** `AI_MODEL` (or `VIBERON_MODEL`) is read by `envModelId()` (`lib/ai/models.ts:320-323`). It wins automatic selection in `resolveModel()` (`lib/ai/index.ts:268-275`, verified by reading it directly: `envMatch` is checked before the tier/provider ranking) and reaches the OpenAI-compatible adapter through `provider-config.ts:108,132`. The CLI also accepts `--model <id>` (`cli/viberon.ts:29`).
+- **Side calls now go through the same resolution (fixed in `2685113`).** `reviewModel()` — shared by the reviewer, the criteria predictor and the blind writer — returns `envModelId()` when `AI_MODEL`/`VIBERON_MODEL` is set, before ever considering the cheapest agentic model (`lib/review/json.ts:96-108`). **Verified:** `tests/review.model-env.test.ts` passes — with only `ANTHROPIC_API_KEY` set, `reviewModel()` picks the cheap default (`claude-haiku-4-5`); with `AI_MODEL=claude-opus-5` also set, it returns `claude-opus-5`; an explicit `reviewModel("claude-sonnet-5")` argument still wins over both. Ran it directly: `npx vitest run tests/review.model-env.test.ts` → 1 passed.
+- **`make eval` now resolves the same way (fixed in `2685113`).** `eval/run.ts:124-127` calls `resolveModel("auto", { agenticOnly: true })` instead of hardcoding a default, so it inherits `AI_MODEL`.
 - **Selection without `AI_MODEL`.** The highest tier wins, with ties broken by `PROVIDER_PREFERENCE` (`lib/ai/index.ts:232,277-288`).
 
-**Gaps (details under [Gaps](#gaps)):**
-- **G1 (medium):** side calls ignore `AI_MODEL`. The reviewer and criteria predictor use the cheapest agentic model available (`lib/review/json.ts:96-104`; `lib/harness/criteria.ts:46`; `lib/harness/solve.ts:579-580,674`). They switch on under `--thorough` or on automatic escalation after a failed attempt (`solve.ts:937-945`), so one run can call a second model.
-- **G2 (low):** `runTurn` swaps to another model after a `ModelUnavailableError`, first within the same provider and then across providers, for up to 8 hops (`lib/ai/index.ts:88-104,113-120`).
-- **G3 (low):** `make eval` ignores `AI_MODEL`. `eval/run.ts:121` defaults to `VIBERON_MODEL ?? "claude-opus-5"`, so with a non-Anthropic `AI_API_KEY` and no `VIBERON_MODEL` the bonus eval fails its credential check.
-- **G4 (low):** the declared defaults disagree. `PROVIDER_TABLE.anthropic.model = "claude-sonnet-5"` (line 33) is never used; its only consumer, `resolveOpenAiCompatEnv()` (called at `openai-compat.ts:228`), does not serve Anthropic. Without `AI_MODEL`, an Anthropic key actually runs `claude-opus-5-5`, the first frontier-tier catalog entry (`models.ts:54-58`). The no-key fallback string `"claude-opus-5"` (`lib/headless/run.ts:277`) is a third value.
+**Two low-severity notes remain (details under [Gaps](#gaps)), neither reopened by this fix:**
+- **G2 (low):** `runTurn` still swaps to another model after a `ModelUnavailableError`, first within the same provider and then across providers, for up to 8 hops (`lib/ai/index.ts:88-104,113-120`), without special-casing an explicitly-set `AI_MODEL` — so a mid-run provider error can still hop away from the prescribed model.
+- **G4 (low):** the declared defaults still disagree. `PROVIDER_TABLE.anthropic.model = "claude-sonnet-5"` (`provider-config.ts:33`) is never used; without `AI_MODEL`, an Anthropic key actually runs `claude-opus-5-5`, the first frontier-tier catalog entry (`models.ts:54`). The no-key fallback string is a third value, `"claude-opus-5"` (`lib/headless/run.ts:283`, moved from 277 by unrelated commits).
 
 ### 5. Standard evaluation procedure: PASS
 
@@ -148,7 +150,7 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 - **Setup warning is harmless.** pnpm 10 prints "Ignored build scripts: @firebase/util, electron, esbuild, msw, protobufjs, sharp, unrs-resolver". This does not affect `run` or `test`: the test suite passed after exactly this install.
 
 **Gaps (details under [Gaps](#gaps)):**
-- **G5 (medium):** the Node.js runtime is an undeclared prerequisite. `package.json` has no `engines` or `packageManager` field, and there is no `.nvmrc` or `.node-version`. `make setup` assumes Node and corepack are already installed, and without `packageManager` corepack picks its own default pnpm. Verified here on Node v22.18.0 with pnpm 10.24.0; `@types/node ^20` implies Node ≥ 20.
+- **G5 (low, downgraded from medium — partially fixed in `2685113`):** `.nvmrc` now pins `v22.18.0` at the repo root, so any tool that respects it (`nvm use`, `fnm`, `asdf`, several CI actions) picks the right Node automatically. `package.json` still has no `engines` or `packageManager` field, though, so `npm install`/corepack won't themselves warn or fail on the wrong Node or pnpm version, and corepack still picks its own default pnpm rather than a pinned one. Per developer-0e, the `engines` addition is in flight in a separate concurrent change. Verified here on Node v22.18.0 with pnpm 10.24.0; `@types/node ^20` implies Node ≥ 20.
 - **G6 (low):** the README does not document the evaluation interface. It never mentions `make` or `AI_API_KEY` (`grep` finds no hits). Its headless quickstart tells the reader to `export ANTHROPIC_API_KEY` (`README.md:168`), and "Getting started" says to use `pnpm install`/`pnpm dev` and add a key in Settings (`README.md:110-132`).
 - *Note:* `make eval` (the bonus target) also needs `python3` for the Python fixture tasks (`README.md:209-210`), and `make setup` does not install it.
 
@@ -211,10 +213,10 @@ Every entry was checked against the repository at commit `738a313` (branch `hack
 
 | # | § | Severity | Gap | Suggested fix |
 |---|---|---|---|---|
-| G1 | 4 | Medium | The reviewer and criteria predictor use the cheapest available agentic model, not `AI_MODEL`, so a run can call a second model (`lib/review/json.ts:96-104`, `lib/harness/criteria.ts:46`, `lib/harness/solve.ts:579-580,937-945`) | In `reviewModel()`, return `envModelId()` when it is set, so every call uses the prescribed model |
-| G5 | 9 | Medium | The Node runtime is not declared or pinned: no `engines`, no `packageManager`, no `.nvmrc`. `make setup` assumes Node and corepack exist | Add `"engines": {"node": ">=20"}`, `"packageManager": "pnpm@10.24.0"` and `.nvmrc`. Have `make setup` fail fast with a clear message if `node` is missing or too old |
-| G2 | 4 | Low | Automatic cross-model fallback on `ModelUnavailableError`, up to 8 hops (`lib/ai/index.ts:88-104,113-120`) | Disable the hop when `AI_MODEL` is set: fail loudly instead of substituting |
-| G3 | 4 | Low | `make eval` ignores `AI_MODEL` and defaults to `claude-opus-5` (`eval/run.ts:121`) | Use `AI_MODEL`, or `resolveModel("auto")` as `lib/headless/run.ts:268-278` does |
+| ~~G1~~ | 4 | ~~Medium~~ | **Fixed in `2685113`.** `reviewModel()` now returns `envModelId()` first | — |
+| ~~G3~~ | 4 | ~~Low~~ | **Fixed in `2685113`.** `eval/run.ts` now resolves through `resolveModel("auto")` | — |
+| G5 | 9 | Low (was medium) | **Partially fixed in `2685113`:** `.nvmrc` pins Node. `engines`/`packageManager` still missing from `package.json` | Add `"engines": {"node": ">=20"}` and `"packageManager": "pnpm@10.24.0"` to `package.json` (in flight per developer-0e). Have `make setup` fail fast with a clear message if `node` is missing or too old |
+| G2 | 4 | Low | Automatic cross-model fallback on `ModelUnavailableError`, up to 8 hops (`lib/ai/index.ts:88-104,113-120`), still unconditional | Disable the hop when `AI_MODEL` is set: fail loudly instead of substituting |
 | G4 | 4 | Low | Three disagreeing "default model" values: `PROVIDER_TABLE.anthropic.model` (`claude-sonnet-5`, unused), the actual catalog pick (`claude-opus-5-5`), and the no-key fallback (`claude-opus-5`) | Pick one source of truth, and remove or align the unused Anthropic entry |
 | G6 | 2, 9 | Low | The README never mentions `make` or `AI_API_KEY`; its headless quickstart says `ANTHROPIC_API_KEY`. The missing-key error also names `ANTHROPIC_API_KEY` (`lib/ai/types.ts:197`) | Add an "Evaluation quickstart" (`export AI_API_KEY`, `make setup`, `make run`) to the README, and mention `AI_API_KEY` in the missing-credential messages |
 | G7 | 2 | Low | `AI_API_KEY` is not exclusive: per-provider env vars and UI-saved keys take precedence (`credentials.ts:61-65,90-99`) | Let `AI_API_KEY` win when it is set, or document the precedence. It is harmless on a clean evaluator box |
@@ -247,4 +249,25 @@ make setup                                                     # → Done in 7.8
 env -u AI_API_KEY -u ANTHROPIC_API_KEY -u OPENAI_API_KEY -u GROQ_API_KEY make test
                                                                # → 99 files, 958 passed, 1 skipped
 TASK="Say hello" REPO=<scratch git repo> make run              # no key → exit 2, structured result.json
+```
+
+### Re-verification of `2685113` (§4, §9)
+
+```sh
+cd /Users/nishant/Developer/vibron-compliance-update    # worktree of main @ 7160c5f, includes 2685113
+
+git show --stat 2685113                                 # .nvmrc, eval/run.ts, lib/review/json.ts, tests/review.model-env.test.ts
+cat .nvmrc                                               # → v22.18.0
+grep -n "engines\|packageManager" package.json           # → no match (still open)
+
+# reviewModel()/eval now read AI_MODEL — read the diff, then ran the new test for real
+npx vitest run tests/review.model-env.test.ts             # → 1 passed
+
+# confirmed resolveModel("auto") itself checks envModelId() before tier ranking
+sed -n '239,290p' lib/ai/index.ts
+
+# confirmed G2 and G4 are unchanged by this commit
+sed -n '80,125p' lib/ai/index.ts                          # cross-model hop still unconditional
+grep -n "claude-sonnet-5\|claude-opus-5\b\|claude-opus-5-5" lib/ai/provider-config.ts lib/headless/run.ts lib/ai/models.ts
+                                                           # → still three values (provider-config.ts:33, models.ts:54, headless/run.ts:283)
 ```
