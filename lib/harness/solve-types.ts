@@ -4,7 +4,7 @@
  */
 
 import type { EventSink, FailureClass } from "@/lib/agents/events";
-import type { CheckRunner, VerifyServices } from "@/lib/harness/gate";
+import type { CheckRunner, GateDecision, Strength, VerifyServices } from "@/lib/harness/gate";
 import type { VerificationReport, VerifyCommand } from "@/lib/verify/types";
 import type { WorkspaceHandle } from "@/lib/workspace";
 
@@ -68,6 +68,23 @@ export interface SolveOptions {
 
 export type SolveStatus = "resolved" | "unverified" | "failed" | "incomplete" | "error";
 
+/** One attempt's evidence, for the headless evidence bundle's per-attempt table. */
+export interface AttemptSummary {
+  /** 1-based attempt number (the fast path, when accepted, is attempt 1). */
+  n: number;
+  /** The gate's ruling for this attempt, or "unverified" when the gate never ran on it. */
+  status: GateDecision | "unverified";
+  /** The gate's feedback (first line), or why the attempt stopped when there was no ruling. */
+  reason: string;
+  /** Size of this attempt's diff against the original tree, in characters. */
+  diffChars: number;
+  /** Model calls spent on this attempt (the solver loop, or the one fast-path call). */
+  calls: number;
+  /** Input + output tokens spent on this attempt. */
+  tokens: number;
+  strength: Strength;
+}
+
 export interface SolveResult {
   status: SolveStatus;
   summary: string;
@@ -127,5 +144,7 @@ export interface SolveResult {
   };
   /** Acceptance criteria predicted from the task (empty when skipped). */
   criteria?: string[];
+  /** Per-attempt evidence (fast path plus every solver/review pass), for the headless evidence bundle. */
+  attempts?: AttemptSummary[];
   error?: string;
 }

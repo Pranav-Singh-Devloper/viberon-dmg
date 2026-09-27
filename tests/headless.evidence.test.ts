@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { buildEvidence, evidenceChecks, moveScratch, redact, writeEvidenceBundle } from "@/lib/headless/evidence";
+import { buildEvidence, evidenceChecks, moveScratch, redact, renderHtml, writeEvidenceBundle } from "@/lib/headless/evidence";
 import { emptySolveResult } from "@/lib/headless/run";
 import type { VerificationReport } from "@/lib/verify/types";
 
@@ -61,6 +61,26 @@ describe("evidence bundle", () => {
     const r = resolved();
     r.gate.newFailures = ["zero"];
     expect(evidenceChecks(r)[0]!.verdict).toBe("regression");
+  });
+
+  it("carries the per-attempt summary into evidence.json and report.html", () => {
+    const r = resolved();
+    r.attempts = [
+      { n: 1, status: "give_up", reason: "regression", diffChars: 40, calls: 2, tokens: 500, strength: "none" },
+      { n: 2, status: "accept", reason: "verified", diffChars: 20, calls: 2, tokens: 300, strength: "strong" },
+    ];
+    const ev = buildEvidence({ ...base, result: r });
+    expect(ev.attemptDetails).toEqual(r.attempts);
+    const html = renderHtml(ev, r.diff);
+    expect(html).toContain("Per-attempt evidence");
+    expect(html).toContain("give_up");
+    expect(html).toContain("strong");
+  });
+
+  it("omits the per-attempt table when the harness recorded no attempts", () => {
+    const ev = buildEvidence({ ...base, result: resolved() });
+    expect(ev.attemptDetails).toEqual([]);
+    expect(renderHtml(ev, "")).not.toContain("Per-attempt evidence");
   });
 
   it("never writes a key", () => {

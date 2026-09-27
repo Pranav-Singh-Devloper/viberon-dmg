@@ -238,6 +238,13 @@ describe("solveTask", () => {
     expect(result.metrics.verifyRuns).toBeGreaterThan(0);
     expect(solved).toEqual([result]);
 
+    // One attempt (the reject/accept cycle happened within it, via the gate): its
+    // own evidence summary, capped to what the harness recorded for it.
+    expect(result.attempts).toHaveLength(1);
+    expect(result.attempts![0]).toMatchObject({ n: 1, status: "accept", strength: "strong", calls: 4 });
+    expect(result.attempts![0].tokens).toBeGreaterThan(0);
+    expect(result.attempts![0].diffChars).toBeGreaterThan(0);
+
     // The rejection reached the model as the finish tool result.
     expect(JSON.stringify(fake.requests[2].messages.at(-1))).toMatch(/REGRESSION/);
 
@@ -287,6 +294,10 @@ describe("solveTask", () => {
     expect(log.of("recovery").some((r) => /re-prompted once/.test(r.detail))).toBe(true);
     // Attempt 1 was auto-verified (it never called finish) and gave up on its regression.
     expect(log.of("gate").map((g) => g.decision)).toEqual(["give_up", "accept"]);
+    // The per-attempt summary carries both attempts, in order, with the same rulings.
+    expect(result.attempts).toHaveLength(2);
+    expect(result.attempts![0]).toMatchObject({ n: 1, status: "give_up" });
+    expect(result.attempts![1]).toMatchObject({ n: 2, status: "accept", strength: "strong" });
   });
 
   it("hands a small repository's whole source to the agent in its first message", async () => {

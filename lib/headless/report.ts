@@ -98,6 +98,19 @@ export function renderReport(input: {
     lines.push("", "Detected checks:", ...input.verifyCommands.map((c) => `- \`${c.command}\` (${c.kind}; ${c.source})`));
   }
 
+  if (result.attempts?.length) {
+    lines.push(
+      "",
+      "## Per-attempt evidence",
+      "",
+      "| # | status | strength | reason | diff chars | calls | tokens |",
+      "|---|---|---|---|---|---|---|",
+      ...result.attempts.map(
+        (a) => `| ${a.n} | ${a.status} | ${a.strength} | ${a.reason.replace(/\|/g, "\\|")} | ${a.diffChars} | ${a.calls} | ${a.tokens} |`,
+      ),
+    );
+  }
+
   const r = result.recovery;
   lines.push(
     "",

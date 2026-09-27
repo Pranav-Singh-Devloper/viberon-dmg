@@ -15,7 +15,7 @@ import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import type { SolveResult } from "@/lib/harness/solve-types";
+import type { AttemptSummary, SolveResult } from "@/lib/harness/solve-types";
 import { diffstat, STATUS_TEXT } from "@/lib/headless/report";
 import type { VerificationReport, VerifyCommand } from "@/lib/verify/types";
 
@@ -61,6 +61,8 @@ export interface Evidence {
   checks: EvidenceCheck[];
   gate: { enabled: boolean; command: string | null; ranAfterLastEdit: boolean; rejections: number; reason: string };
   attempts: number;
+  /** Per-attempt evidence (SolveResult.attempts), when the harness recorded it. */
+  attemptDetails: AttemptSummary[];
   recovery: SolveResult["recovery"];
   usage: {
     inputTokens: number;
@@ -183,6 +185,7 @@ export function buildEvidence(input: EvidenceInput): Evidence {
     checks: evidenceChecks(result),
     gate: { enabled: g.enabled, command: g.command, ranAfterLastEdit: g.ranAfterLastEdit, rejections: g.rejections, reason: g.reason },
     attempts: 1 + result.recovery.rollbacks,
+    attemptDetails: result.attempts ?? [],
     recovery: result.recovery,
     usage: {
       inputTokens: m.inputTokens,
@@ -257,6 +260,12 @@ export function renderHtml(ev: Evidence, diff: string): string {
     })
     .join("\n");
   const r = ev.recovery;
+  const attemptRows = ev.attemptDetails
+    .map(
+      (a) =>
+        `<tr><td>${a.n}</td><td>${esc(a.status)}</td><td>${esc(a.strength)}</td><td>${esc(a.reason)}</td><td>${n(a.diffChars)}</td><td>${a.calls}</td><td>${n(a.tokens)}</td></tr>`,
+    )
+    .join("");
   const phases = Object.entries(ev.phaseMs)
     .map(([k, v]) => `${esc(k)} ${(v / 1000).toFixed(1)}s`)
     .join(", ");
@@ -281,6 +290,7 @@ ${ev.error ? `<h2>Error</h2><div class="card">${esc(ev.error)}</div>` : ""}
 <div class="card"><table><tr><th>verdict</th><th>origin</th><th>check</th><th>original code</th><th>with patch</th></tr>${rows || '<tr><td colspan="5">no checks ran</td></tr>'}</table>
 <p class="sub">Gate: ${esc(ev.gate.reason || "-")}; ran after last edit: ${ev.gate.ranAfterLastEdit ? "yes" : "no"}; rejections: ${ev.gate.rejections}</p></div>
 <h2>Patch</h2><div class="card"><p class="sub">${ev.patch.files} file(s): ${ev.patch.paths.map(esc).join(", ") || "(no changes)"}</p><pre>${diff.trim() ? diffHtml : "(empty)"}</pre></div>
+${attemptRows ? `<h2>Per-attempt evidence</h2><div class="card"><table><tr><th>#</th><th>status</th><th>strength</th><th>reason</th><th>diff chars</th><th>calls</th><th>tokens</th></tr>${attemptRows}</table></div>` : ""}
 <h2>Attempts and recovery</h2><div class="card">${ev.attempts} attempt(s); checkpoints ${r.checkpoints}, rollbacks ${r.rollbacks}, stuck events ${r.stuckEvents}, best checkpoint restored: ${r.restoredBest ? "yes" : "no"}; ${u.toolCalls} tool calls${u.costUsd ? `; $${u.costUsd.toFixed(4)}` : ""}${phases ? `<div class="sub">phases: ${phases}</div>` : ""}</div>`,
   );
 }
