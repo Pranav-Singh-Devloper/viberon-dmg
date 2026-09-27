@@ -61,6 +61,8 @@ export interface VerifyServices {
   detectVerifyCommands: typeof verify.detectVerifyCommands;
   runVerification: typeof verify.runVerification;
   relatedTestFiles: typeof verify.relatedTestFiles;
+  /** Ranks candidate test files for a set of changed files (narrower than `relatedTestFiles`: import-aware, convention-aware). */
+  relatedTestTargets: typeof verify.relatedTestTargets;
   extractFailures: typeof verify.extractFailures;
 }
 
@@ -69,6 +71,7 @@ export function verifyServices(overrides: Partial<VerifyServices> = {}): VerifyS
     detectVerifyCommands: verify.detectVerifyCommands,
     runVerification: verify.runVerification,
     relatedTestFiles: verify.relatedTestFiles,
+    relatedTestTargets: verify.relatedTestTargets,
     extractFailures: verify.extractFailures,
     ...overrides,
   };
@@ -484,17 +487,23 @@ export class Gate {
   }
 
   /**
-   * Targeted runs of the existing tests related to the changed files. For
-   * pytest, only the test functions that reference a changed function or
-   * class (node ids), so a big test module does not run whole on both sides
-   * (measured: 736 s on sympy); whole files only when targeting finds nothing.
+   * Targeted runs of the existing tests related to the changed files.
+   * Candidate files come from `relatedTestTargets` (import-aware, naming-
+   * convention-aware ranking; narrower than `relatedTestFiles`). For pytest,
+   * only the test functions that reference a changed function or class (node
+   * ids), so a big test module does not run whole on both sides (measured:
+   * 736 s on sympy); whole files only when targeting finds nothing or more
+   * than `MAX_TARGETED_IDS` ids match (a name filter that big is no faster
+   * than the whole file, and risks matching too broadly).
    */
   private async relatedCommands(changed: string[]): Promise<string[]> {
     const test = this.testCommand;
     const template = test?.targetTemplate ?? (test ? FRAMEWORK_TEMPLATES[test.framework] : undefined);
     if (!template?.includes("{files}") || !changed.length) return [];
-    const files = await this.services.relatedTestFiles(this.options.root, changed, this.options.graph).catch(() => []);
-    const picks = files.filter((f) => !changed.includes(f)).slice(0, 4);
+    const targets = await this.services
+      .relatedTestTargets(this.options.root, changed, [], { command: test, limit: 4 })
+      .catch((): null => null);
+    const picks = (targets?.files ?? []).filter((f) => !changed.includes(f)).slice(0, 4);
     if (!picks.length) return [];
     if (test && (test.framework === "pytest" || test.framework === "unittest") && picks.every((f) => f.endsWith(".py"))) {
       const ids = await this.targetedPythonTests(changed, picks).catch((): string[] => []);

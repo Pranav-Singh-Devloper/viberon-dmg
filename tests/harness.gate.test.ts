@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { Gate, guessReproduction, isTestPath, rootRelative, summarizeOutput, type GateOptions } from "@/lib/harness/gate";
 import { snapshot } from "@/lib/harness/snapshot";
+import type { RelatedTestTargets } from "@/lib/verify";
 import type { VerifyCommand } from "@/lib/verify/types";
 import { eventLog } from "./helpers/harness-workspace";
 import { makeTmpRepo, shellRunner, type TmpRepo } from "./helpers/tmp-repo";
@@ -14,6 +15,16 @@ const SUITE: VerifyCommand[] = [
   { command: "node test/lib.test.js", framework: "node-test", kind: "test", source: "test script" },
 ];
 const RELATED = "node --test test/lib.test.js";
+
+/** A `relatedTestTargets` result that finds nothing (the caller falls back to the full suite). */
+const noRelatedTargets: RelatedTestTargets = {
+  files: [],
+  testIds: [],
+  command: null,
+  framework: null,
+  timeoutMs: 120_000,
+  reason: "no related test files",
+};
 
 let repo: TmpRepo;
 let log: ReturnType<typeof eventLog>;
@@ -117,15 +128,36 @@ describe("Gate", () => {
   });
 
   it("falls back to the suite when no related tests are found", async () => {
-    gate = await makeGate({ services: { relatedTestFiles: async () => [] } });
+    gate = await makeGate({ services: { relatedTestTargets: async () => noRelatedTargets } });
     repo.write("lib.js", RIGHT);
     const res = await gate.verify({ summary: "fix", reproduction: REPRO });
     expect(res.checks.map((c) => c.origin)).toEqual(["agent", "suite"]);
     expect(res.decision).toBe("accept");
   });
 
+  it("runs the related-tests check against the file relatedTestTargets selects, not a naming guess", async () => {
+    // "odd-name.spec.js" would not be picked by any stem/naming convention
+    // from "lib.js"; only the mocked relatedTestTargets result names it.
+    repo.write("test/odd-name.spec.js", "require('assert').ok(true);\n");
+    gate = await makeGate({
+      services: {
+        relatedTestTargets: async (_root, changed) => ({
+          files: changed.includes("lib.js") ? ["test/odd-name.spec.js"] : [],
+          testIds: [],
+          command: null,
+          framework: "node-test",
+          timeoutMs: 45_000,
+          reason: "mocked",
+        }),
+      },
+    });
+    repo.write("lib.js", RIGHT);
+    const res = await gate.verify({ summary: "fix", reproduction: REPRO });
+    expect(res.checks.map((c) => [c.origin, c.command])).toContainEqual(["related-tests", "node --test test/odd-name.spec.js"]);
+  });
+
   it("accepts unverified only when there is nothing runnable", async () => {
-    gate = await makeGate({ suite: [], services: { relatedTestFiles: async () => [] } });
+    gate = await makeGate({ suite: [], services: { relatedTestTargets: async () => noRelatedTargets } });
     repo.write("lib.js", RIGHT);
     const res = await gate.verify({ summary: "fix" });
     expect(res).toMatchObject({ done: true, decision: "accept_unverified", checks: [] });
