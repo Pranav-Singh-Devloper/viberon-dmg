@@ -180,3 +180,16 @@ Status: **built** = merged on main with tests green · **in progress** = an agen
   - P1–P10: evidence bundle, bench suites/sharding, related-test targets, compact search, shallow clone and probe, terminal output cleaning, idempotent PRs, capped lessons, run-history routes, port docs.
   - Planner: CLI sessions are closed only after the last in-process solve (a batch runs concurrently). 1096 tests pass.
   - 8 parallel agents are wiring the remaining P/T hooks.
+- **2026-09-27, final round:**
+  - Merged all 8 parallel wiring agents:
+    - W1: gate uses relatedTestTargets;
+    - W2: grep uses compact search, and commands go through classifyAgentCommand;
+    - W3: localize unchanged on purpose (no reachable gain);
+    - W4: `attempts[]` table, lessonsNote, condensed task text;
+    - W5: lessonsNote and condense in the issues/tasks path;
+    - W6: `eval --suite`, `swe --tag/--shard`, a `bench` script;
+    - W7: clone probe;
+    - W8: `listRuns()`.
+  - Also merged the batch issue view (U) and the compliance docs (13 PASS / 1 N/A / 0 GAP), and fixed §4/G2/§9 (AI_MODEL governs every call and is never swapped; Node/pnpm pinned).
+  - **Final eval, Sonnet 5, 2 workers: 6/6 by hidden tests, honest verdicts 6/6, 0 regressions, 76 s wall time, 15.8k tokens and 9 model calls in total** (earlier today: 5/6, 58 s, about 8.9k tokens across 32 calls). Four of the six tasks were solved in a single call.
+  - 1115 tests pass; clean build is green.
