@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { ROLES } from "@/lib/agents/roles";
@@ -76,6 +80,19 @@ describe("tool output caps", () => {
     expect(out).toContain("more in this file");
     expect(out).toMatch(/^src\/b\.ts:1: export const needle = 1;$/m);
     expect(out.split("\n").filter((l) => /^ {2}\d+: /.test(l) && l.includes("needle")).length).toBeLessThanOrEqual(GREP_PER_FILE + 1);
+  });
+
+  it("grep uses the on-disk compact search (P4's lib/search/compact) when the workspace has a real root", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "vb-grep-"));
+    mkdirSync(path.join(root, "src"), { recursive: true });
+    writeFileSync(path.join(root, "src", "a.ts"), numbered(20, "needle"));
+    writeFileSync(path.join(root, "src", "b.ts"), "export const needle = 1;\n");
+    const ws = await makeWorkspace([]);
+    const out = await runTool("grep", { pattern: "needle" }, { ...ctx(ws), handle: { ...ws.handle, rootPath: root } });
+    expect(out).toMatch(/^\d+ matches in 2 files for "needle":$/m);
+    expect(out).toMatch(/^src\/a\.ts {2}\(\d+ matches?\)$/m);
+    expect(out).toContain("more in this file");
+    expect(out).toMatch(/^src\/b\.ts {2}\(1 match\)$/m);
   });
 
   it("groupByFile leaves non-row output alone", () => {

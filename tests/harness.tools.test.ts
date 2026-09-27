@@ -90,6 +90,12 @@ describe("runTool enforcement", () => {
     ]);
   });
 
+  it("run_command refuses agent git-push up front, via classifyAgentCommand", async () => {
+    const c = ctx({ commandPolicy: "auto", handle: { ...ws.handle, rootPath: "/tmp/not-used" } });
+    const out = await runTool("run_command", { command: "git push origin main" }, c);
+    expect(out).toMatch(/^Refused: this command pushes to a remote/);
+  });
+
   it("routes edits through approval under editPolicy ask", async () => {
     const asks: ApprovalAsk[] = [];
     const deny = ctx({
