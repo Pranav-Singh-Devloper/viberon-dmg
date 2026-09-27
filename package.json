@@ -4,6 +4,9 @@
   "description": "Viberon desktop workspace with editor, graph, and chat",
   "author": "Viberon",
   "private": true,
+  "engines": {
+    "node": ">=20"
+  },
   "main": "electron/main.js",
   "bin": {
     "viberon": "bin/viberon"
@@ -92,8 +95,5 @@
     "linux": {
       "target": "AppImage"
     }
-  },
-  "bin": {
-    "viberon": "bin/viberon"
   }
 }
