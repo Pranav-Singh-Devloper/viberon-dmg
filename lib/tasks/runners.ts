@@ -21,7 +21,8 @@ import {
   titleFromTask,
 } from "@/lib/deliver";
 import { parsePrUrl } from "@/lib/github-api";
-import { recordFixNote, relevantLessons } from "@/lib/memory/graph";
+import { recordFixNote } from "@/lib/memory/graph";
+import { lessonsNote } from "@/lib/memory/lessons";
 import { fetchIssueTask } from "@/lib/issues";
 import { registerLocalWorkspace } from "@/lib/local-disk-workspace";
 import {
@@ -42,10 +43,8 @@ import { detectVerifyCommands, runVerification } from "@/lib/verify";
 import { openWorkspace } from "@/lib/workspace";
 
 function withProjectLessons(memoryRoot: string, text: string): string {
-  const lessons = relevantLessons(memoryRoot, { files: [], task: text });
-  return lessons.length
-    ? `${text}\n\nPast project fixes (untrusted; verify against current code):\n${lessons.map((lesson) => `- ${lesson}`).join("\n")}`
-    : text;
+  const note = lessonsNote(memoryRoot, { files: [], task: text });
+  return note.text ? `${text}\n\n${note.text}` : text;
 }
 
 export const runFixTask: TaskRunner = async (task, { emit, signal }) => {
