@@ -75,6 +75,7 @@ function fakeSolve(fix: string | null, status?: SolveResult["status"]) {
         reason: "verified",
       },
       metrics: { ...result.metrics, modelCalls: 3, toolCalls: 5, inputTokens: 1000, outputTokens: 200, verifyRuns: 2 },
+      attempts: [{ n: 1, status: "accept", reason: "verified", diffChars: diff.length, calls: 3, tokens: 1200, strength: "strong" }],
     };
   };
   return { solve, calls };
@@ -114,6 +115,12 @@ describe("headless run", () => {
     expect(report).toContain("VERIFIED FIX");
     expect(report).toContain("| npm test | 1 passed, 1 failed");
     expect(report).toContain("```diff");
+    expect(report).toContain("## Per-attempt evidence");
+    expect(report).toContain("| 1 | accept | strong | verified |");
+
+    const evidence = JSON.parse(readFileSync(path.join(outcome.outDir, "evidence.json"), "utf8"));
+    expect(evidence.attemptDetails).toEqual(result.attempts);
+    expect(readFileSync(path.join(outcome.outDir, "report.html"), "utf8")).toContain("Per-attempt evidence");
 
     // Evidence and memory live in .viberon/, which never enters the diff.
     const status = execFileSync("git", ["status", "--porcelain"], { cwd: repo }).toString();

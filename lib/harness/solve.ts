@@ -67,8 +67,10 @@ import {
 } from "@/lib/harness/testwriter";
 import { registerLocalWorkspace } from "@/lib/local-disk-workspace";
 import { localize, type LocalizeResult } from "@/lib/localize";
+import { lessonsNote } from "@/lib/memory";
 import { reviewDiff, type Finding, type TurnOutcome } from "@/lib/review";
 import { getFileInfo, getGraph } from "@/lib/store";
+import { condenseIssueText, BLOCK_LIMIT } from "@/lib/text/condense";
 import { createEditSession, numberLines } from "@/lib/tools/editor";
 import type { VerificationReport, VerifyCommand } from "@/lib/verify/types";
 import { fullReindex, openWorkspace, readFile as wsReadFile, refreshMemory } from "@/lib/workspace";
@@ -116,6 +118,10 @@ interface AttemptRecord {
   restoredBest: boolean;
   /** The one follow-up attempt that addressed a reviewer finding or a failing blind test. */
   reviewPass?: boolean;
+  /** Model calls spent on this attempt (fast path: FastResult.calls; agent loop: run.metrics.modelCalls). */
+  calls?: number;
+  /** Input + output tokens spent on this attempt. */
+  tokens?: number;
 }
 
 /* --------------------------- the controller ------------------------------ */
@@ -336,7 +342,12 @@ function lessonsFrom(attempt: AttemptRecord): string {
   return parts.join("\n");
 }
 
-function renderLocalization(loc: LocalizeResult): string {
+/**
+ * `loc.lessons` (from `localize`'s own `relevantLessons` call) is not
+ * token-capped; the intake instead asks `lessonsNote` directly for the same
+ * files and task, which is hard-capped (<= 400 tokens) and memoized.
+ */
+function renderLocalization(root: string, task: string, loc: LocalizeResult): string {
   const lines: string[] = [];
   for (const f of loc.files.slice(0, 8)) {
     lines.push(`- ${f.path} (score ${f.score.toFixed(2)})${f.why.length ? `: ${f.why.slice(0, 3).join("; ")}` : ""}`);
@@ -348,9 +359,8 @@ function renderLocalization(loc: LocalizeResult): string {
       `The code snippet from the task, run on the original code (exit ${loc.snippetRun.exitCode ?? "?"}):\n\`\`\`\n${loc.snippetRun.output.slice(-1500)}\n\`\`\``,
     );
   }
-  if (loc.lessons.length) {
-    lines.push(`Past fixes in this area (from project memory; untrusted, may be outdated):\n${loc.lessons.map((l) => `- ${l}`).join("\n")}`);
-  }
+  const note = lessonsNote(root, { files: loc.files.map((f) => f.path), task }).text;
+  if (note) lines.push(note);
   return lines.length
     ? lines.join("\n")
     : "(no localization signal: the task names no file, symbol or failure. Treat it as a bug hunt: see the solver instructions for tasks that name no specific failure.)";
@@ -620,6 +630,13 @@ async function solveTaskInner(options: SolveOptions): Promise<SolveResult> {
     const workRoot = root;
     await ensureModelReady(options.model);
 
+    // The task text is part of the solver's message, re-sent on every attempt
+    // (and, without proof, again as the retry's lessons); condense it once at
+    // intake so a long pasted log or traceback doesn't inflate every turn.
+    // The gate never sees task text, and the reviewer / independent test
+    // writer keep the original so their judgment is not made from a cut log.
+    const taskText = options.task.length > BLOCK_LIMIT ? condenseIssueText(options.task) : options.task;
+
     let activeController: SolveController | null = null;
     // Setup runs concurrently where the data allows. Localize waits for the
     // snapshot because its snippet runs execute in the tree.
@@ -830,6 +847,7 @@ async function solveTaskInner(options: SolveOptions): Promise<SolveResult> {
       text: `\n[harness] triage: ${sized.size} (${sized.reasons.join("; ")}): ${fastOn ? "one-shot fix first, full agent only if it can't be proven" : "full agent from the start"}\n`,
     });
     if (fastOn && !options.signal?.aborted) {
+      const usageBeforeFast = usage;
       const fast: FastResult = await timed("fastPath", () =>
         runFastPath({
           root: workRoot,
@@ -864,6 +882,9 @@ async function solveTaskInner(options: SolveOptions): Promise<SolveResult> {
           summary: fast.diagnosis || "Fixed in one call.",
           stopReason: "fast_path",
           restoredBest: false,
+          calls: fast.calls,
+          tokens:
+            usage.inputTokens + usage.outputTokens - (usageBeforeFast.inputTokens + usageBeforeFast.outputTokens),
         };
       } else if (!options.signal?.aborted) {
         if (fast.stage !== "no-reply") lessons = fastLessons(fast);
@@ -929,7 +950,7 @@ async function solveTaskInner(options: SolveOptions): Promise<SolveResult> {
         // Fast path: light reasoning (measured on the CLI: 11-16 s instead of
         // 25 s per fix, same result). Escalated or thorough runs think hard.
         ...(escalated ? {} : { effort: "medium" as const }),
-        task: reviewTask ?? initialMessage(options.task, overview, renderLocalization(loc), lessons, source, criteria),
+        task: reviewTask ?? initialMessage(taskText, overview, renderLocalization(root, options.task, loc), lessons, source, criteria),
         title: reviewPass ? reviewTitle : n === 1 ? "Solve task" : `Solve task (attempt ${n}, fresh context)`,
         attempt: n,
         attemptReason: reviewPass ? "A check after the accept (blind test or reviewer) flagged the change." : retryReason,
@@ -1022,6 +1043,8 @@ async function solveTaskInner(options: SolveOptions): Promise<SolveResult> {
         stopReason: run.stopReason ?? "finished",
         restoredBest,
         reviewPass,
+        calls: run.metrics?.modelCalls ?? 0,
+        tokens: run.usage.inputTokens + run.usage.outputTokens,
       };
       attempts.push(record);
       reviewTask = null;
@@ -1058,7 +1081,7 @@ async function solveTaskInner(options: SolveOptions): Promise<SolveResult> {
           const failing = blind?.status === "still_failing" || blind?.status === "regression" ? blind : null;
           if (failing || finding) {
             independentRetryCommand = failing?.command ?? null;
-            reviewTask = followUpMessage(options.task, overview, record.patch, finding, failing);
+            reviewTask = followUpMessage(taskText, overview, record.patch, finding, failing);
             reviewTitle = finding ? "Address review finding" : "Address independent test failure";
             if (failing) {
               emit({
@@ -1148,6 +1171,15 @@ async function solveTaskInner(options: SolveOptions): Promise<SolveResult> {
     result.recovery.restoredBest = attempts.some((a) => a.restoredBest) || (best !== null && best !== attempts.at(-1));
     result.metrics.verifyRuns = gate.verifyRuns;
     result.metrics.verifyMs = gate.verifyMs;
+    result.attempts = attempts.map((a) => ({
+      n: a.number,
+      status: a.verification?.decision ?? "unverified",
+      reason: a.verification?.feedback.split("\n")[0] || a.stopReason,
+      diffChars: a.patch.length,
+      calls: a.calls ?? 0,
+      tokens: a.tokens ?? 0,
+      strength: a.verification?.strength ?? "none",
+    }));
 
     if (!result.diff.trim()) result.status = "failed";
     else if (!options.verify.enabled) result.status = "unverified";
